@@ -57,12 +57,12 @@ P = out.transport_plan(C, epsilon=0.1)
 
 Performance comparison on **NVIDIA RTX 6000 Ada Generation** (N=M=[128...16384], Batch=1):
 
-| Library           | Algorithm            | Avg Time (16k) | Characteristics |
-| ----------------- | -------------------- | -------------- | ------------------ |
-| **sinkhorn**      | **Stabilized (Log)** | **739ms**      | **~3x faster than POT (Log)**, numerically stable |
-| POT               | Stabilized (Log)     | 2181ms         | Robust implementation via `method='sinkhorn_log'` |
+| Library           | Algorithm            | Avg Time (16k) | Characteristics                                          |
+| ----------------- | -------------------- | -------------- | -------------------------------------------------------- |
+| **sinkhorn**      | **Stabilized (Log)** | **739ms**      | **~3x faster than POT (Log)**, numerically stable        |
+| POT               | Stabilized (Log)     | 2181ms         | Robust implementation via `method='sinkhorn_log'`        |
 | POT               | Standard (Scaling)   | 278ms          | Fastest but numerically unstable (NaN risk with small ε) |
-| sinkhorn          | Stabilized (Log)     | 2618ms         | Pure PyTorch fallback |
+| sinkhorn          | Stabilized (Log)     | 2618ms         | Pure PyTorch fallback                                    |
 
 ```bash
 uv run python scripts/benchmark.py --batch-sizes 1 --sizes 128 256 512 1024 2048 4096 8192 12288 16384
@@ -137,4 +137,4 @@ uv run pytest tests/test_benchmark.py --benchmark-only
 
 ## License
 
-MIT
+[MIT](https://opensource.org/license/mit)
