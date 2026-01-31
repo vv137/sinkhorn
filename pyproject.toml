@@ -1,0 +1,63 @@
+[project]
+name = "sinkhorn"
+version = "0.1.0"
+description = "High-performance Triton kernels for balanced/unbalanced Sinkhorn optimal transport"
+readme = "README.md"
+license = "MIT"
+requires-python = ">=3.11"
+authors = [
+    { name = "Minsoo Kim", email = "vv137.xyz@gmail.com"}
+]
+keywords = [
+    "optimal-transport",
+    "sinkhorn",
+    "triton",
+    "pytorch",
+    "gpu",
+    "cuda"
+]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Science/Research",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+]
+dependencies = [
+    "torch>=2.0.0",
+    "triton>=2.1.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.0.0",
+    "pytest-benchmark>=4.0.0",
+]
+test = [
+    "pot>=0.9.0",
+]
+
+[project.urls]
+Homepage = "https://github.com/utse/sinkhorn-triton"
+Repository = "https://github.com/utse/sinkhorn-triton"
+
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = ["test_*.py"]
+addopts = "-v"
+
+[dependency-groups]
+dev = [
+    "pytest>=7.0.0",
+    "pytest-benchmark>=4.0.0",
+    "pot>=0.9.0",
+    "matplotlib>=3.5.0",
+]
