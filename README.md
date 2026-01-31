@@ -1,4 +1,4 @@
-# Sinkhorn-Triton
+# Sinkhorn
 
 High-performance Triton kernels for balanced and unbalanced Sinkhorn optimal transport.
 
@@ -14,8 +14,8 @@ High-performance Triton kernels for balanced and unbalanced Sinkhorn optimal tra
 
 ```bash
 # Clone the repository
-git clone https://github.com/vv137/sinkhorn-triton.git
-cd sinkhorn-triton
+git clone https://github.com/vv137/sinkhorn.git
+cd sinkhorn
 
 # Install with uv (recommended)
 uv sync
@@ -26,9 +26,9 @@ pip install -e .
 
 ### Requirements
 
-- Python 3.10+
+- Python 3.11+
 - PyTorch 2.0+
-- Triton 2.0+ (for GPU kernels)
+- Triton 2.1+ (for GPU kernels)
 - CUDA-capable GPU (optional, for Triton backend)
 
 ## Quick Start
@@ -55,15 +55,17 @@ P = out.transport_plan(C, epsilon=0.1)
 
 ## Benchmark
 
-| Library | Backend | Time | Speedup |
-| ------- | ------- | ---- | ------- |
-| **sinkhorn-triton** | **Triton** | **2.35ms** | **21x** vs POT-GPU |
-| sinkhorn-triton | PyTorch | 4.65ms | 11x |
-| POT | NumPy | 6.22ms | 8x |
-| POT | CUDA | 49.12ms | 1x |
+Performance comparison on CUDA (N=M, batch sizes 1-16, 100 iterations):
+
+| Library           | Backend     | Avg Time   | Speedup vs POT-GPU |
+| ----------------- | ----------- | ---------- | ------------------ |
+| **sinkhorn**      | **Triton**  | **1.01ms** | **88x**            |
+| sinkhorn          | PyTorch     | 1.77ms     | 50x                |
+| POT               | NumPy (CPU) | 19.55ms    | 5x                 |
+| POT               | PyTorch     | 89.33ms    | 1x (baseline)      |
 
 ```bash
-uv run python scripts/benchmark.py --sizes 32 64 128 256 --batch-sizes 1 4 8
+uv run python scripts/benchmark.py --sizes 32 64 128 256 512 --batch-sizes 1 4 8 16
 ```
 
 ## Architecture
