@@ -55,22 +55,22 @@ P = out.transport_plan(C, epsilon=0.1)
 
 ## Benchmark
 
-Performance comparison on CUDA (N=M, batch sizes 1-16, 100 iterations):
+Performance comparison on **NVIDIA RTX 6000 Ada Generation** (N=M=[128...16384], Batch=1):
 
-| Library           | Backend     | Avg Time   | Speedup vs POT-GPU |
-| ----------------- | ----------- | ---------- | ------------------ |
-| **sinkhorn**      | **Triton**  | **1.01ms** | **88x**            |
-| sinkhorn          | PyTorch     | 1.77ms     | 50x                |
-| POT               | NumPy (CPU) | 19.55ms    | 5x                 |
-| POT               | PyTorch     | 89.33ms    | 1x (baseline)      |
+| Library           | Algorithm            | Avg Time (16k) | Characteristics |
+| ----------------- | -------------------- | -------------- | ------------------ |
+| **sinkhorn**      | **Stabilized (Log)** | **739ms**      | **~3x faster than POT (Log)**, numerically stable |
+| POT               | Stabilized (Log)     | 2181ms         | Robust implementation via `method='sinkhorn_log'` |
+| POT               | Standard (Scaling)   | 278ms          | Fastest but numerically unstable (NaN risk with small ε) |
+| sinkhorn          | Stabilized (Log)     | 2618ms         | Pure PyTorch fallback |
 
 ```bash
-uv run python scripts/benchmark.py --sizes 32 64 128 256 512 --batch-sizes 1 4 8 16
+uv run python scripts/benchmark.py --batch-sizes 1 --sizes 128 256 512 1024 2048 4096 8192 12288 16384
 ```
 
 ## Architecture
 
-```
+```text
 src/sinkhorn/
 ├── sinkhorn.py        # High-level API entry point
 ├── pytorch/           # Pure PyTorch reference implementations
@@ -95,7 +95,7 @@ Balanced and Unbalanced OT unified via scaling factor ρ:
 
 Update equations (log-space):
 
-```
+```text
 f ← ρ·f + (1-ρ)·(-ε·logsumexp((g - C)/ε, dim=M) + ε·log(a))
 g ← ρ·g + (1-ρ)·(-ε·logsumexp((f - C)/ε, dim=N) + ε·log(b))
 ```

@@ -52,11 +52,11 @@ class TestCrossValidationPOT:
         f, g, _, _ = sinkhorn_balanced(C, a, b, epsilon=epsilon, max_iters=max_iters)
 
         log_P = (f.unsqueeze(-1) + g.unsqueeze(-2) - C) / epsilon
-        P_ours = torch.exp(log_P).squeeze(0).cpu().numpy()
+        P_ours = torch.exp(log_P).squeeze(0)
 
         # Compare transport plans
-        err = np.abs(P_ours - P_pot).max()
-        assert err < 0.01, f"Transport plan differs from POT: max error = {err}"
+        P_pot_tensor = torch.from_numpy(P_pot).to(P_ours.device)
+        torch.testing.assert_close(P_ours, P_pot_tensor, rtol=1e-3, atol=1e-3)
 
     def test_transport_cost_matches_pot(self, device, pot_available):
         """Test that transport cost matches POT."""
@@ -90,13 +90,11 @@ class TestCrossValidationPOT:
 
         log_P = (f.unsqueeze(-1) + g.unsqueeze(-2) - C) / epsilon
         P_ours = torch.exp(log_P)
-        cost_ours = (P_ours * C).sum().item()
+        cost_ours = (P_ours * C).sum()
 
         # Compare costs
-        rel_err = abs(cost_ours - cost_pot) / cost_pot
-        assert rel_err < 0.01, (
-            f"Transport cost differs: ours={cost_ours:.6f}, pot={cost_pot:.6f}, rel_err={rel_err:.4f}"
-        )
+        cost_pot_tensor = torch.tensor(cost_pot, device=cost_ours.device, dtype=cost_ours.dtype)
+        torch.testing.assert_close(cost_ours, cost_pot_tensor, rtol=1e-3, atol=1e-3)
 
     def test_marginals_match_pot(self, device, pot_available):
         """Test that marginal constraints match POT."""
@@ -129,22 +127,22 @@ class TestCrossValidationPOT:
         f, g, _, _ = sinkhorn_balanced(C, a, b, epsilon=epsilon, max_iters=200)
 
         log_P = (f.unsqueeze(-1) + g.unsqueeze(-2) - C) / epsilon
-        P_ours = torch.exp(log_P).squeeze(0).cpu().numpy()
-        row_sum_ours = P_ours.sum(axis=1)
-        col_sum_ours = P_ours.sum(axis=0)
+        P_ours = torch.exp(log_P).squeeze(0)
+        row_sum_ours = P_ours.sum(dim=-1)
+        col_sum_ours = P_ours.sum(dim=-2)
 
-        # Both should match input marginals
-        row_err_pot = np.abs(row_sum_pot - a_np).max()
-        row_err_ours = np.abs(row_sum_ours - a_np).max()
-        col_err_pot = np.abs(col_sum_pot - b_np).max()
-        col_err_ours = np.abs(col_sum_ours - b_np).max()
+        # Compare marginals with torch.testing.assert_close
+        a_tensor = torch.from_numpy(a_np).to(row_sum_ours.device)
+        b_tensor = torch.from_numpy(b_np).to(col_sum_ours.device)
+        row_sum_pot_tensor = torch.from_numpy(row_sum_pot).to(row_sum_ours.device)
+        col_sum_pot_tensor = torch.from_numpy(col_sum_pot).to(col_sum_ours.device)
 
-        assert row_err_ours < 0.01, f"Row marginal error: {row_err_ours}"
-        assert col_err_ours < 0.01, f"Col marginal error: {col_err_ours}"
+        torch.testing.assert_close(row_sum_ours, a_tensor, rtol=1e-3, atol=1e-3)
+        torch.testing.assert_close(col_sum_ours, b_tensor, rtol=1e-3, atol=1e-3)
 
-        # Our errors should be similar to POT
-        assert abs(row_err_ours - row_err_pot) < 0.01
-        assert abs(col_err_ours - col_err_pot) < 0.01
+        # Our marginals should be similar to POT
+        torch.testing.assert_close(row_sum_ours, row_sum_pot_tensor, rtol=1e-3, atol=1e-3)
+        torch.testing.assert_close(col_sum_ours, col_sum_pot_tensor, rtol=1e-3, atol=1e-3)
 
     def test_dual_potentials_consistency(self, device, pot_available):
         """Test dual potential consistency with POT coupling matrix."""
@@ -215,12 +213,10 @@ class TestCrossValidationPOT:
             f, g, _, _ = sinkhorn_balanced(C, a, b, epsilon=eps, max_iters=300)
             log_P = (f.unsqueeze(-1) + g.unsqueeze(-2) - C) / eps
             P_ours = torch.exp(log_P)
-            cost_ours = (P_ours * C).sum().item()
+            cost_ours = (P_ours * C).sum()
 
-            rel_err = abs(cost_ours - cost_pot) / cost_pot
-            assert rel_err < 0.02, (
-                f"epsilon={eps}: cost mismatch, rel_err={rel_err:.4f}"
-            )
+            cost_pot_tensor = torch.tensor(cost_pot, device=cost_ours.device, dtype=cost_ours.dtype)
+            torch.testing.assert_close(cost_ours, cost_pot_tensor, rtol=1e-3, atol=1e-3)
 
 
 class TestValueComparison:
@@ -250,11 +246,8 @@ class TestValueComparison:
         f2, g2, _, _ = sinkhorn_unbalanced(C, a, b, epsilon=epsilon, max_iters=100)
 
         # Should produce very similar results
-        f_diff = (f1 - f2).abs().max()
-        g_diff = (g1 - g2).abs().max()
-
-        assert f_diff < 0.01, f"Balanced and unbalanced(tau=None) f differ: {f_diff}"
-        assert g_diff < 0.01, f"Balanced and unbalanced(tau=None) g differ: {g_diff}"
+        torch.testing.assert_close(f1, f2, rtol=1e-3, atol=1e-3)
+        torch.testing.assert_close(g1, g2, rtol=1e-3, atol=1e-3)
 
     def test_transport_plan_structure(self, device):
         """Test transport plan has correct structure."""
@@ -278,18 +271,16 @@ class TestValueComparison:
 
         # Row sums ≈ a
         row_sums = P.sum(dim=-1)
-        row_err = (row_sums - a).abs().max()
-        assert row_err < 0.01, f"Row marginal error: {row_err}"
+        torch.testing.assert_close(row_sums, a, rtol=1e-3, atol=1e-3)
 
         # Column sums ≈ b
         col_sums = P.sum(dim=-2)
-        col_err = (col_sums - b).abs().max()
-        assert col_err < 0.01, f"Column marginal error: {col_err}"
+        torch.testing.assert_close(col_sums, b, rtol=1e-3, atol=1e-3)
 
         # Total mass ≈ 1 (per batch)
         total_mass = P.sum(dim=(-2, -1))
-        mass_err = (total_mass - 1.0).abs().max()
-        assert mass_err < 0.01, f"Total mass error: {mass_err}"
+        expected_mass = torch.ones(B, device=device)
+        torch.testing.assert_close(total_mass, expected_mass, rtol=1e-3, atol=1e-3)
 
     def test_cost_decreases_with_iterations(self, device):
         """Test that transport cost stabilizes with more iterations."""

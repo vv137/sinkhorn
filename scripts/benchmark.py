@@ -25,7 +25,7 @@ def benchmark_sinkhorn_internal(
     repeats: int = 10,
     device: str = "cuda",
 ) -> dict[str, Any]:
-    """Benchmark sinkhorn-triton backends.
+    """Benchmark sinkhorn backends.
 
     Returns:
         Dictionary with timing results
@@ -45,6 +45,10 @@ def benchmark_sinkhorn_internal(
         if device == "cuda":
             torch.cuda.synchronize()
 
+    # Reset memory stats before benchmarking
+    if device == "cuda":
+        torch.cuda.reset_peak_memory_stats()
+
     # Benchmark
     times = []
     for _ in range(repeats):
@@ -60,8 +64,13 @@ def benchmark_sinkhorn_internal(
 
         times.append((end - start) * 1000)  # Convert to ms
 
+    # Get peak memory usage
+    peak_memory_mb = 0.0
+    if device == "cuda":
+        peak_memory_mb = torch.cuda.max_memory_allocated() / (1024 * 1024)
+
     return {
-        "library": "sinkhorn-triton",
+        "library": "sinkhorn",
         "backend": backend,
         "B": B,
         "N": N,
@@ -71,6 +80,7 @@ def benchmark_sinkhorn_internal(
         "max_ms": max(times),
         "std_ms": (sum((t - sum(times) / len(times)) ** 2 for t in times) / len(times))
         ** 0.5,
+        "peak_memory_mb": peak_memory_mb,
     }
 
 
@@ -83,6 +93,7 @@ def benchmark_pot(
     warmup: int = 3,
     repeats: int = 10,
     device: str = "cuda",
+    method: str = "sinkhorn",
 ) -> dict[str, Any]:
     """Benchmark POT (Python Optimal Transport) library.
 
@@ -92,7 +103,7 @@ def benchmark_pot(
     try:
         import ot
     except ImportError:
-        return {"library": "pot", "error": "POT not installed"}
+        return {"library": f"pot-{method}", "error": "POT not installed"}
 
     torch_device = torch.device(device)
 
@@ -108,20 +119,22 @@ def benchmark_pot(
 
     # Warmup
     for _ in range(warmup):
-        _ = ot.sinkhorn(a_np, b_np, C_np, epsilon, numItermax=max_iters)
+        _ = ot.sinkhorn(a_np, b_np, C_np, epsilon, numItermax=max_iters, method=method)
 
     # Benchmark (scale by batch size for fair comparison)
     for _ in range(repeats):
         start = time.perf_counter()
 
         for _ in range(B):
-            _ = ot.sinkhorn(a_np, b_np, C_np, epsilon, numItermax=max_iters)
+            _ = ot.sinkhorn(
+                a_np, b_np, C_np, epsilon, numItermax=max_iters, method=method
+            )
 
         end = time.perf_counter()
         times.append((end - start) * 1000)
 
     return {
-        "library": "pot",
+        "library": f"pot-{method}",
         "backend": "numpy",
         "B": B,
         "N": N,
@@ -143,6 +156,7 @@ def benchmark_pot_gpu(
     warmup: int = 3,
     repeats: int = 10,
     device: str = "cuda",
+    method: str = "sinkhorn",
 ) -> dict[str, Any]:
     """Benchmark POT with PyTorch backend (GPU).
 
@@ -151,12 +165,11 @@ def benchmark_pot_gpu(
     """
     try:
         import ot
-        from ot.backend import get_backend
     except ImportError:
-        return {"library": "pot-gpu", "error": "POT not installed"}
+        return {"library": f"pot-gpu-{method}", "error": "POT not installed"}
 
     if device != "cuda" or not torch.cuda.is_available():
-        return {"library": "pot-gpu", "error": "CUDA not available"}
+        return {"library": f"pot-gpu-{method}", "error": "CUDA not available"}
 
     torch_device = torch.device(device)
 
@@ -170,8 +183,13 @@ def benchmark_pot_gpu(
     # Warmup
     for _ in range(warmup):
         for i in range(B):
-            _ = ot.sinkhorn(a[i], b[i], C[i], epsilon, numItermax=max_iters)
+            _ = ot.sinkhorn(
+                a[i], b[i], C[i], epsilon, numItermax=max_iters, method=method
+            )
         torch.cuda.synchronize()
+
+    # Reset memory stats before benchmarking
+    torch.cuda.reset_peak_memory_stats()
 
     # Benchmark
     for _ in range(repeats):
@@ -179,14 +197,19 @@ def benchmark_pot_gpu(
         start = time.perf_counter()
 
         for i in range(B):
-            _ = ot.sinkhorn(a[i], b[i], C[i], epsilon, numItermax=max_iters)
+            _ = ot.sinkhorn(
+                a[i], b[i], C[i], epsilon, numItermax=max_iters, method=method
+            )
 
         torch.cuda.synchronize()
         end = time.perf_counter()
         times.append((end - start) * 1000)
 
+    # Get peak memory usage
+    peak_memory_mb = torch.cuda.max_memory_allocated() / (1024 * 1024)
+
     return {
-        "library": "pot-gpu",
+        "library": f"pot-gpu-{method}",
         "backend": "torch-cuda",
         "B": B,
         "N": N,
@@ -196,6 +219,7 @@ def benchmark_pot_gpu(
         "max_ms": max(times),
         "std_ms": (sum((t - sum(times) / len(times)) ** 2 for t in times) / len(times))
         ** 0.5,
+        "peak_memory_mb": peak_memory_mb,
     }
 
 
@@ -242,12 +266,12 @@ def run_benchmark_suite(
                         device=device,
                     )
                     results.append(result)
-                    print(f"  sinkhorn-triton ({backend}): {result['mean_ms']:.2f}ms")
+                    print(f"  sinkhorn ({backend}): {result['mean_ms']:.2f}ms")
                 except Exception as e:
-                    print(f"  sinkhorn-triton ({backend}): ERROR - {e}")
+                    print(f"  sinkhorn ({backend}): ERROR - {e}")
                     results.append(
                         {
-                            "library": "sinkhorn-triton",
+                            "library": "sinkhorn",
                             "backend": backend,
                             "B": B,
                             "N": N,
@@ -256,21 +280,28 @@ def run_benchmark_suite(
                         }
                     )
 
-            # Test POT (CPU)
-            try:
-                result = benchmark_pot(B=B, N=N, M=N, device=device)
-                if "error" not in result:
-                    results.append(result)
-                    print(f"  POT (numpy-cpu): {result['mean_ms']:.2f}ms")
-                else:
-                    print(f"  POT (numpy-cpu): {result['error']}")
-            except Exception as e:
-                print(f"  POT (numpy-cpu): ERROR - {e}")
+            # Test POT (CPU) - Standard
+            if N < 4096:
+                try:
+                    result = benchmark_pot(
+                        B=B, N=N, M=N, device=device, method="sinkhorn"
+                    )
+                    if "error" not in result:
+                        results.append(result)
+                        print(f"  POT (numpy-cpu): {result['mean_ms']:.2f}ms")
+                    else:
+                        print(f"  POT (numpy-cpu): {result['error']}")
+                except Exception as e:
+                    print(f"  POT (numpy-cpu): ERROR - {e}")
+            else:
+                print(f"  POT (numpy-cpu): Skipped (N={N} too large for CPU)")
 
-            # Test POT (GPU via torch)
+            # Test POT (GPU via torch) - Standard
             if device == "cuda":
                 try:
-                    result = benchmark_pot_gpu(B=B, N=N, M=N, device=device)
+                    result = benchmark_pot_gpu(
+                        B=B, N=N, M=N, device=device, method="sinkhorn"
+                    )
                     if "error" not in result:
                         results.append(result)
                         print(f"  POT (torch-cuda): {result['mean_ms']:.2f}ms")
@@ -278,6 +309,21 @@ def run_benchmark_suite(
                         print(f"  POT (torch-cuda): {result.get('error', 'unknown')}")
                 except Exception as e:
                     print(f"  POT (torch-cuda): ERROR - {e}")
+
+                # Test POT (GPU via torch) - Log-domain
+                try:
+                    result = benchmark_pot_gpu(
+                        B=B, N=N, M=N, device=device, method="sinkhorn_log"
+                    )
+                    if "error" not in result:
+                        results.append(result)
+                        print(f"  POT-Log (torch-cuda): {result['mean_ms']:.2f}ms")
+                    else:
+                        print(
+                            f"  POT-Log (torch-cuda): {result.get('error', 'unknown')}"
+                        )
+                except Exception as e:
+                    print(f"  POT-Log (torch-cuda): ERROR - {e}")
 
     return results
 
@@ -351,22 +397,52 @@ def plot_benchmark_results(
     ax1.set_xscale("log", base=2)
     ax1.set_yscale("log")
 
-    # --- Plot 2: Speedup vs POT ---
+    # --- Plot 2: Speedup vs Baseline ---
     ax2 = axes[1]
 
-    # Find POT baseline
-    pot_results = {
-        r["N"]: r["mean_ms"]
-        for r in valid_results
-        if r["library"] == "pot" and r["B"] == batch
-    }
+    # Determine baseline: prefer sinkhorn(pytorch) as it's always available
+    baseline_lib = "sinkhorn(pytorch)"
+    baseline_name = "PyTorch"
 
-    if pot_results:
-        sizes = sorted(pot_results.keys())
+    # Check if baseline exists
+    baseline_entries = [
+        r
+        for r in valid_results
+        if f"{r['library']}({r.get('backend', 'default')})" == baseline_lib
+        and r["B"] == batch
+    ]
+
+    if not baseline_entries:
+        # Fallback to POT-GPU
+        baseline_lib = "pot-gpu-sinkhorn(torch-cuda)"
+        baseline_name = "POT-GPU"
+        baseline_entries = [
+            r
+            for r in valid_results
+            if f"{r['library']}({r.get('backend', 'default')})" == baseline_lib
+            and r["B"] == batch
+        ]
+
+    if not baseline_entries:
+        # Fallback to POT-CPU
+        baseline_lib = "pot-sinkhorn(numpy)"
+        baseline_name = "POT-CPU"
+        baseline_entries = [
+            r
+            for r in valid_results
+            if f"{r['library']}({r.get('backend', 'default')})" == baseline_lib
+            and r["B"] == batch
+        ]
+
+    baseline_results = {r["N"]: r["mean_ms"] for r in baseline_entries}
+
+    if baseline_results:
+        sizes = sorted(baseline_results.keys())
 
         for lib in libraries:
-            if "pot" in lib:
+            if lib == baseline_lib:
                 continue
+
             lib_results = [
                 r
                 for r in valid_results
@@ -377,31 +453,35 @@ def plot_benchmark_results(
             speedups = []
             speedup_sizes = []
             for s in sizes:
-                if s in pot_results:
-                    lib_time = next(
-                        (r["mean_ms"] for r in lib_results if r["N"] == s), None
-                    )
-                    if lib_time:
-                        speedups.append(pot_results[s] / lib_time)
-                        speedup_sizes.append(s)
+                # Find corresponding result for this library
+                lib_time = next(
+                    (r["mean_ms"] for r in lib_results if r["N"] == s), None
+                )
+                if lib_time:
+                    speedups.append(baseline_results[s] / lib_time)
+                    speedup_sizes.append(s)
 
             if speedups:
                 ax2.plot(
                     speedup_sizes,
                     speedups,
                     "o-",
-                    label=f"{lib} vs POT",
+                    label=f"{lib} vs {baseline_name}",
                     linewidth=2,
                     markersize=8,
                     color=lib_colors[lib],
                 )
 
         ax2.axhline(
-            y=1, color="black", linestyle="--", linewidth=1, label="POT baseline"
+            y=1,
+            color="black",
+            linestyle="--",
+            linewidth=1,
+            label=f"{baseline_name} baseline",
         )
         ax2.set_xlabel("Matrix Size (N=M)", fontsize=12)
-        ax2.set_ylabel("Speedup vs POT", fontsize=12)
-        ax2.set_title(f"Speedup over POT (Batch={batch})", fontsize=14)
+        ax2.set_ylabel(f"Speedup vs {baseline_name}", fontsize=12)
+        ax2.set_title(f"Speedup over {baseline_name} (Batch={batch})", fontsize=14)
         ax2.legend(fontsize=10)
         ax2.grid(True, alpha=0.3)
         ax2.set_xscale("log", base=2)
@@ -485,6 +565,80 @@ def plot_batch_comparison(
     print(f"Saved batch comparison plot to {output_path}")
 
 
+def plot_memory_usage(
+    results: list[dict[str, Any]],
+    output_path: Path,
+) -> None:
+    """Plot memory usage across different sizes.
+
+    Args:
+        results: List of benchmark results
+        output_path: Path to save SVG file
+    """
+    # Filter results with memory information
+    valid_results = [
+        r for r in results if "error" not in r and r.get("peak_memory_mb", 0) > 0
+    ]
+
+    if not valid_results:
+        print("No memory data available to plot")
+        return
+
+    fig, ax = plt.subplots(figsize=(10, 6))
+
+    libraries = list(
+        set(f"{r['library']}({r.get('backend', 'default')})" for r in valid_results)
+    )
+    batch = max(set(r["B"] for r in valid_results))
+
+    colors = plt.cm.tab10.colors
+    lib_colors = {lib: colors[i % len(colors)] for i, lib in enumerate(libraries)}
+
+    for lib in libraries:
+        lib_results = [
+            r
+            for r in valid_results
+            if f"{r['library']}({r.get('backend', 'default')})" == lib
+            and r["B"] == batch
+        ]
+        if not lib_results:
+            continue
+
+        sizes = sorted(set(r["N"] for r in lib_results))
+        memory = [
+            next((r["peak_memory_mb"] for r in lib_results if r["N"] == s), None)
+            for s in sizes
+        ]
+        memory = [m for m in memory if m is not None]
+        sizes = sizes[: len(memory)]
+
+        if sizes and memory:
+            ax.plot(
+                sizes,
+                memory,
+                "o-",
+                label=lib,
+                linewidth=2,
+                markersize=8,
+                color=lib_colors[lib],
+            )
+
+    ax.set_xlabel("Matrix Size (N=M)", fontsize=12)
+    ax.set_ylabel("Peak Memory (MB)", fontsize=12)
+    ax.set_title(f"GPU Memory Usage (Batch={batch})", fontsize=14)
+    ax.legend(fontsize=10)
+    ax.grid(True, alpha=0.3)
+    ax.set_xscale("log", base=2)
+    ax.set_yscale("log")
+
+    plt.tight_layout()
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    plt.savefig(output_path, format="svg", dpi=150, bbox_inches="tight")
+    plt.close()
+
+    print(f"Saved memory usage plot to {output_path}")
+
+
 def main():
     parser = argparse.ArgumentParser(description="Benchmark Sinkhorn implementations")
     parser.add_argument("--sizes", type=int, nargs="+", default=[32, 64, 128, 256, 512])
@@ -501,7 +655,7 @@ def main():
     print(f"Device: {args.device}")
     print(f"Sizes: {args.sizes}")
     print(f"Batch sizes: {args.batch_sizes}")
-    print(f"Libraries: sinkhorn-triton (pytorch, triton), POT (numpy, torch)")
+    print(f"Libraries: sinkhorn (pytorch, triton), POT (numpy, torch)")
 
     # Run benchmarks
     results = run_benchmark_suite(
@@ -521,6 +675,7 @@ def main():
     # Generate plots
     plot_benchmark_results(results, args.output_dir / "performance.svg")
     plot_batch_comparison(results, args.output_dir / "batch_comparison.svg")
+    plot_memory_usage(results, args.output_dir / "memory_usage.svg")
 
     # Print summary
     print("\n" + "=" * 60)
