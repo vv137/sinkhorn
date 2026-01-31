@@ -19,7 +19,7 @@ def benchmark_sinkhorn_internal(
     B: int,
     N: int,
     M: int,
-    epsilon: float = 0.1,
+    epsilon: float = 1.0,
     max_iters: int = 100,
     warmup: int = 5,
     repeats: int = 10,
