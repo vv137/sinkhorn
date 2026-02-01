@@ -109,6 +109,20 @@ Backward pass uses **checkpointed recomputation** for memory efficiency:
 
 This provides exact gradients with O(NM) memory instead of O(K×NM) for K iterations.
 
+For faster training, use **truncated backpropagation** via `grad_iters`:
+
+```python
+from sinkhorn.autograd import sinkhorn_differentiable
+
+# Full recomputation (exact, slower)
+f, g = sinkhorn_differentiable(C, a, b, epsilon=0.1, grad_iters=0)
+
+# Truncated (approximate, faster) - good for large epsilon
+f, g = sinkhorn_differentiable(C, a, b, epsilon=1.0, grad_iters=10)
+```
+
+> **Tip**: Larger epsilon = faster convergence = fewer `grad_iters` needed.
+
 ## API Reference
 
 ### `sinkhorn(C, a, b, epsilon, ...)`

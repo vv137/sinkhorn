@@ -195,6 +195,38 @@ class SinkhornFunction(torch.autograd.Function):
         return C_grad.grad, ...
 ```
 
+### 5.5 Truncated Gradients
+
+For faster training, you can use **truncated backpropagation** via the `grad_iters` parameter. Instead of recomputing all `max_iters` iterations, only the last `grad_iters` iterations are computed with gradient tracking.
+
+```python
+# Full recomputation (exact gradients, slower)
+f, g = sinkhorn_differentiable(C, a, b, epsilon, grad_iters=0)
+
+# Truncated (approximate gradients, faster)
+f, g = sinkhorn_differentiable(C, a, b, epsilon, grad_iters=20)
+```
+
+#### Accuracy vs Epsilon
+
+The required `grad_iters` depends on **epsilon** (entropic regularization):
+
+| epsilon | Convergence | grad_iters=5     | grad_iters=10    | grad_iters=50    |
+| ------- | ----------- | ---------------- | ---------------- | ---------------- |
+| 0.1     | Slow        | ~34% error       | ~19% error       | ~1% error        |
+| 1.0     | Fast        | **~0.01% error** | **~0% error**    | **~0% error**    |
+
+> [!TIP]
+> With larger epsilon (faster convergence), fewer gradient iterations are needed.
+> A good rule of thumb: `grad_iters = max_iters // 4` for balanced trade-off.
+
+#### When to Use Truncated Gradients
+
+- **Use `grad_iters=0`** (full recompute): When gradient accuracy is critical
+- **Use `grad_iters>0`** (truncated): For faster training with approximate gradients
+- **Large epsilon** (≥0.5): `grad_iters=10` is often sufficient
+- **Small epsilon** (<0.1): Use larger `grad_iters` or full recompute
+
 ---
 
 ## Appendix A: Implicit Differentiation (Reference)
