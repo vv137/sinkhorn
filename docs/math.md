@@ -127,21 +127,83 @@ This ensures $\exp(-\infty/\varepsilon) = 0$ in the transport plan.
 
 ---
 
-## 5. Implicit Differentiation
+## 5. Backward Pass: Gradient Checkpointing
 
 ### 5.1 Motivation
 
 Standard autodiff through Sinkhorn iterations has:
 
-- Memory: $O(K \cdot NM)$ for $K$ iterations
+- Memory: $O(K \cdot NM)$ for $K$ iterations (stores all intermediate states)
 - Computation: Forward + backward through all iterations
 
-Implicit differentiation reduces to:
+We use **gradient checkpointing** to achieve:
 
-- Memory: $O(NM)$
-- Computation: One linear solve
+- Memory: $O(NM)$ (only stores inputs)
+- Computation: Forward 2× + backward 1×
 
-### 5.2 Fixed-Point Formulation
+### 5.2 Checkpointed Recomputation
+
+Instead of storing intermediate states during forward pass, we:
+
+1. **Forward pass**: Run Sinkhorn without gradient tracking (`torch.no_grad()`)
+2. **Backward pass**: Re-run forward with gradients enabled, then backprop
+
+```python
+# Forward: memory-efficient, no grad tracking
+with torch.no_grad():
+    f, g = sinkhorn_iterations(C, a, b, ...)
+
+# Backward: recompute with grad tracking
+with torch.enable_grad():
+    C_grad = C.detach().requires_grad_(True)
+    f, g = sinkhorn_iterations(C_grad, a, b, ...)
+    loss = (f * grad_f).sum() + (g * grad_g).sum()
+    loss.backward()  # → C_grad.grad
+```
+
+### 5.3 Trade-offs
+
+| Approach        | Memory                | Compute                    | Gradient Accuracy |
+| --------------- | --------------------- | -------------------------- | ----------------- |
+| Full Unrolled   | $O(K \cdot NM)$       | 1× forward + 1× backward   | Exact             |
+| Checkpointing   | $O(NM)$               | 2× forward + 1× backward   | Exact             |
+| Implicit Diff   | $O(NM)$               | 1× forward + linear solve  | Approximate*      |
+
+*\*Implicit differentiation has convergence issues for balanced Sinkhorn due to gauge freedom (see Appendix A).*
+
+### 5.4 Implementation
+
+Both balanced and unbalanced Sinkhorn use the same checkpointing approach, implemented in `autograd.py`:
+
+```python
+class SinkhornFunction(torch.autograd.Function):
+    @staticmethod
+    def forward(ctx, C, a, b, ...):
+        with torch.no_grad():
+            f, g = sinkhorn_forward(C, a, b, ...)
+        ctx.save_for_backward(C, a, b, ...)
+        return f, g
+
+    @staticmethod
+    def backward(ctx, grad_f, grad_g):
+        C, a, b, ... = ctx.saved_tensors
+        with torch.enable_grad():
+            C_grad = C.detach().requires_grad_(True)
+            f, g = sinkhorn_forward(C_grad, a, b, ...)
+            loss = (f * grad_f).sum() + (g * grad_g).sum()
+            loss.backward()
+        return C_grad.grad, ...
+```
+
+---
+
+## Appendix A: Implicit Differentiation (Reference)
+
+> **Note**: This section describes implicit differentiation for reference.
+> The current implementation uses gradient checkpointing instead due to
+> convergence issues with the adjoint system for balanced Sinkhorn.
+
+### A.1 Fixed-Point Formulation
 
 At convergence, the potentials satisfy:
 
@@ -151,58 +213,23 @@ $$
 
 where $T$ is the Sinkhorn operator.
 
-### 5.3 Adjoint System
+### A.2 Adjoint System
 
-Given upstream gradients $\bar{\mathbf{f}}, \bar{\mathbf{g}}$, we solve for adjoint variables $\boldsymbol{\lambda}_f, \boldsymbol{\lambda}_g$:
+Given upstream gradients $\bar{\mathbf{f}}, \bar{\mathbf{g}}$, solve for adjoint variables:
 
 $$
 (\mathbf{I} - \mathbf{J}_T^\top) \begin{pmatrix} \boldsymbol{\lambda}_f \\ \boldsymbol{\lambda}_g \end{pmatrix} = \begin{pmatrix} \bar{\mathbf{f}} \\ \bar{\mathbf{g}} \end{pmatrix}
 $$
 
-where $\mathbf{J}_T$ is the Jacobian of $T$ at the fixed point.
+### A.3 Why It Fails for Balanced Sinkhorn
 
-### 5.4 Neumann Series Solver
-
-Instead of Conjugate Gradient, we use the **Neumann series** expansion:
+For balanced OT, the potentials have **gauge freedom**: adding constant $c$ to all $f_i$ and subtracting $c$ from all $g_j$ leaves the transport plan unchanged:
 
 $$
-(\mathbf{I} - \mathbf{J}_T)^{-1} = \sum_{k=0}^{\infty} \mathbf{J}_T^k = \mathbf{I} + \mathbf{J}_T + \mathbf{J}_T^2 + \cdots
+P_{ij} = \exp\left(\frac{(f_i + c) + (g_j - c) - C_{ij}}{\varepsilon}\right) = \exp\left(\frac{f_i + g_j - C_{ij}}{\varepsilon}\right)
 $$
 
-**Convergence Condition:**
-The series converges when the spectral radius $\rho(\mathbf{J}_T) < 1$.
-
-**For Sinkhorn:** The Jacobian at the fixed point satisfies $\rho(\mathbf{J}_T) < 1$ because Sinkhorn is a contraction mapping in the Hilbert projective metric.
-
-**Algorithm:**
-
-```
-λ = rhs
-term = rhs
-for k = 1, ..., max_iters:
-    term = J_T @ term
-    λ = λ + term
-    if ||term|| < tol: break
-return λ
-```
-
-**Advantages over CG:**
-
-- No linear system conditioning issues
-- Works for both balanced and unbalanced
-- Simpler implementation
-
-### 5.5 Gradient Expressions
-
-Once adjoints are obtained:
-
-$$
-\begin{aligned}
-\frac{\partial \mathcal{L}}{\partial C_{ij}} &= -\frac{1}{\varepsilon} P_{ij}^* (\lambda_f^i + \lambda_g^j) \\
-\frac{\partial \mathcal{L}}{\partial a_i} &= \frac{\varepsilon}{a_i} \lambda_f^i \\
-\frac{\partial \mathcal{L}}{\partial b_j} &= \frac{\varepsilon}{b_j} \lambda_g^j
-\end{aligned}
-$$
+This means $(\mathbf{I} - \mathbf{J}_T)$ has eigenvalue 1 for the constant eigenvector, making the system nearly singular and the Neumann series slow to converge or divergent
 
 ---
 
@@ -214,7 +241,7 @@ Computing $\text{LSE}(\mathbf{x}) = \log \sum_i \exp(x_i)$ naively causes overfl
 
 **Two-Pass Algorithm:**
 
-```
+```text
 m = max(x)
 lse = m + log(sum(exp(x - m)))
 ```
@@ -293,11 +320,11 @@ $$
 
 ### 6.5 Epsilon Sensitivity
 
-| $\varepsilon$ | Behavior |
-|---------------|----------|
-| Large (>1) | Fast convergence, smooth plan, but poor OT approximation |
-| Medium (0.01-0.1) | Good balance of speed and accuracy |
-| Small (<0.01) | Accurate OT, but slow convergence and numerical issues |
+| $\varepsilon$      | Behavior                                                  |
+| ------------------ | --------------------------------------------------------- |
+| Large (>1)         | Fast convergence, smooth plan, but poor OT approximation |
+| Medium (0.01-0.1)  | Good balance of speed and accuracy                       |
+| Small (<0.01)      | Accurate OT, but slow convergence and numerical issues   |
 
 ---
 

@@ -58,6 +58,12 @@ def jvp_sinkhorn(
 
     Computes J_T @ v where J_T is the Jacobian of the Sinkhorn operator T
     at the fixed point, and v = (v_f, v_g).
+
+    The Jacobian has structure:
+        J_T = [ rho_a * I,              (1-rho_a) * diag(1/r) @ P ]
+              [ (1-rho_b) * diag(1/c) @ P^T,  rho_b * I          ]
+
+    where r = row_sum(P), c = col_sum(P).
     """
     # Row and column sums of P
     row_sum = P.sum(dim=-1).clamp(min=1e-30)  # (B, N)
@@ -85,6 +91,58 @@ def jvp_sinkhorn(
     return out_f, out_g
 
 
+def vjp_sinkhorn(
+    v_f: Tensor,
+    v_g: Tensor,
+    P: Tensor,
+    epsilon: float,
+    rho_a: float = 0.0,
+    rho_b: float = 0.0,
+    mask_a: Tensor | None = None,
+    mask_b: Tensor | None = None,
+) -> tuple[Tensor, Tensor]:
+    """Transpose-Jacobian-vector product for Sinkhorn fixed-point operator.
+
+    Computes J_T^T @ v where J_T^T is the transpose of the Jacobian.
+
+    The transpose Jacobian has structure:
+        J_T^T = [ rho_a * I,              (1-rho_b) * P @ diag(1/c) ]
+                [ (1-rho_a) * P^T @ diag(1/r),  rho_b * I          ]
+
+    where r = row_sum(P), c = col_sum(P).
+
+    Note: The key difference from jvp_sinkhorn is that the off-diagonal blocks
+    are swapped and the division happens before the matrix multiply.
+    """
+    # Row and column sums of P
+    row_sum = P.sum(dim=-1).clamp(min=1e-30)  # (B, N)
+    col_sum = P.sum(dim=-2).clamp(min=1e-30)  # (B, M)
+
+    # For J_T^T, the (f,g) block is: (1-rho_b) * P @ diag(1/c)
+    # So out_f contribution from v_g is: (1-rho_b) * P @ (v_g / c)
+    scaled_v_g = v_g / col_sum
+    Pv_g = torch.bmm(P, scaled_v_g.unsqueeze(-1)).squeeze(-1)  # (B, N)
+
+    # For J_T^T, the (g,f) block is: (1-rho_a) * P^T @ diag(1/r)
+    # So out_g contribution from v_f is: (1-rho_a) * P^T @ (v_f / r)
+    scaled_v_f = v_f / row_sum
+    Pv_f = torch.bmm(P.transpose(-2, -1), scaled_v_f.unsqueeze(-1)).squeeze(
+        -1
+    )  # (B, M)
+
+    # Apply unbalanced scaling (diagonal blocks are same as jvp)
+    out_f = rho_a * v_f + (1 - rho_b) * Pv_g
+    out_g = rho_b * v_g + (1 - rho_a) * Pv_f
+
+    # Apply masks
+    if mask_a is not None:
+        out_f = out_f.masked_fill(~mask_a, 0.0)
+    if mask_b is not None:
+        out_g = out_g.masked_fill(~mask_b, 0.0)
+
+    return out_f, out_g
+
+
 def neumann_series_solve(
     rhs_f: Tensor,
     rhs_g: Tensor,
@@ -99,11 +157,12 @@ def neumann_series_solve(
 ) -> tuple[Tensor, Tensor, int]:
     """Solve (I - J_T^T) @ lambda = rhs using Neumann series.
 
-    For spectral radius ρ(J_T) < 1, we have:
-        (I - J_T)^{-1} = I + J_T + J_T^2 + ...
+    For the adjoint system, we need to solve (I - J_T^T) @ lambda = rhs.
+    Using the Neumann series expansion:
+        (I - J_T^T)^{-1} = I + J_T^T + (J_T^T)^2 + ...
 
-    This converges faster than CG for balanced Sinkhorn where J_T
-    is a contraction.
+    This converges when spectral radius ρ(J_T) < 1, which holds for
+    Sinkhorn as it's a contraction mapping.
 
     Args:
         rhs_f: Right-hand side for f (B, N)
@@ -126,14 +185,14 @@ def neumann_series_solve(
     lambda_f = rhs_f.clone()
     lambda_g = rhs_g.clone()
 
-    # Current term to add: J_T^k @ rhs
+    # Current term to add: (J_T^T)^k @ rhs
     term_f = rhs_f.clone()
     term_g = rhs_g.clone()
 
     n_iters = 0
     for i in range(max_iters):
-        # Compute next term: J_T @ current_term
-        term_f, term_g = jvp_sinkhorn(
+        # Compute next term: J_T^T @ current_term (using vjp, not jvp!)
+        term_f, term_g = vjp_sinkhorn(
             term_f, term_g, P, epsilon, rho_a, rho_b, mask_a, mask_b
         )
 

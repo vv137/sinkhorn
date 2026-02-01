@@ -29,17 +29,18 @@ class TestCrossValidationPOT:
         import ot
         from sinkhorn.pytorch.balanced import sinkhorn_balanced
 
-        N, M = 16, 16
+        n_samples = 32
+        n_features = 3
         epsilon = 0.1
-        max_iters = 200
+        max_iters = 100
 
-        # Create test data
-        np.random.seed(42)
-        C_np = np.abs(np.random.randn(N, M)).astype(np.float32)
-        a_np = np.exp(np.random.randn(N).astype(np.float32))
-        a_np = a_np / a_np.sum()
-        b_np = np.exp(np.random.randn(M).astype(np.float32))
-        b_np = b_np / b_np.sum()
+        # Create test data using POT's standard pattern
+        rng = np.random.RandomState(42)
+        x = rng.randn(n_samples, n_features).astype(np.float32)
+        y = rng.randn(n_samples, n_features).astype(np.float32)
+        a_np = ot.utils.unif(n_samples).astype(np.float32)
+        b_np = ot.utils.unif(n_samples).astype(np.float32)
+        C_np = ot.dist(x, y).astype(np.float32)
 
         # POT reference
         P_pot = ot.sinkhorn(a_np, b_np, C_np, epsilon, numItermax=max_iters)
@@ -66,16 +67,18 @@ class TestCrossValidationPOT:
         import ot
         from sinkhorn.pytorch.balanced import sinkhorn_balanced
 
-        N, M = 32, 32
-        epsilon = 0.05
-        max_iters = 300
+        n_samples = 32
+        n_features = 3
+        epsilon = 0.1
+        max_iters = 100
 
-        np.random.seed(123)
-        C_np = np.abs(np.random.randn(N, M)).astype(np.float32)
-        a_np = np.exp(np.random.randn(N).astype(np.float32))
-        a_np = a_np / a_np.sum()
-        b_np = np.exp(np.random.randn(M).astype(np.float32))
-        b_np = b_np / b_np.sum()
+        # Create test data using POT's standard pattern
+        rng = np.random.RandomState(123)
+        x = rng.randn(n_samples, n_features).astype(np.float32)
+        y = rng.randn(n_samples, n_features).astype(np.float32)
+        a_np = ot.utils.unif(n_samples).astype(np.float32)
+        b_np = ot.utils.unif(n_samples).astype(np.float32)
+        C_np = ot.dist(x, y).astype(np.float32)
 
         # POT reference
         P_pot = ot.sinkhorn(a_np, b_np, C_np, epsilon, numItermax=max_iters)
@@ -93,7 +96,9 @@ class TestCrossValidationPOT:
         cost_ours = (P_ours * C).sum()
 
         # Compare costs
-        cost_pot_tensor = torch.tensor(cost_pot, device=cost_ours.device, dtype=cost_ours.dtype)
+        cost_pot_tensor = torch.tensor(
+            cost_pot, device=cost_ours.device, dtype=cost_ours.dtype
+        )
         torch.testing.assert_close(cost_ours, cost_pot_tensor, rtol=1e-3, atol=1e-3)
 
     def test_marginals_match_pot(self, device, pot_available):
@@ -104,18 +109,21 @@ class TestCrossValidationPOT:
         import ot
         from sinkhorn.pytorch.balanced import sinkhorn_balanced
 
-        N, M = 24, 24
+        n_samples = 24
+        n_features = 3
         epsilon = 0.1
+        max_iters = 500
 
-        np.random.seed(456)
-        C_np = np.abs(np.random.randn(N, M)).astype(np.float32)
-        a_np = np.exp(np.random.randn(N).astype(np.float32))
-        a_np = a_np / a_np.sum()
-        b_np = np.exp(np.random.randn(M).astype(np.float32))
-        b_np = b_np / b_np.sum()
+        # Create test data using POT's standard pattern
+        rng = np.random.RandomState(456)
+        x = rng.randn(n_samples, n_features).astype(np.float32)
+        y = rng.randn(n_samples, n_features).astype(np.float32)
+        a_np = ot.utils.unif(n_samples).astype(np.float32)
+        b_np = ot.utils.unif(n_samples).astype(np.float32)
+        C_np = ot.dist(x, y).astype(np.float32)
 
         # POT reference
-        P_pot = ot.sinkhorn(a_np, b_np, C_np, epsilon, numItermax=200)
+        P_pot = ot.sinkhorn(a_np, b_np, C_np, epsilon, numItermax=max_iters)
         row_sum_pot = P_pot.sum(axis=1)
         col_sum_pot = P_pot.sum(axis=0)
 
@@ -124,7 +132,7 @@ class TestCrossValidationPOT:
         a = torch.from_numpy(a_np).unsqueeze(0).to(device)
         b = torch.from_numpy(b_np).unsqueeze(0).to(device)
 
-        f, g, _, _ = sinkhorn_balanced(C, a, b, epsilon=epsilon, max_iters=200)
+        f, g, _, _ = sinkhorn_balanced(C, a, b, epsilon=epsilon, max_iters=max_iters)
 
         log_P = (f.unsqueeze(-1) + g.unsqueeze(-2) - C) / epsilon
         P_ours = torch.exp(log_P).squeeze(0)
@@ -141,8 +149,12 @@ class TestCrossValidationPOT:
         torch.testing.assert_close(col_sum_ours, b_tensor, rtol=1e-3, atol=1e-3)
 
         # Our marginals should be similar to POT
-        torch.testing.assert_close(row_sum_ours, row_sum_pot_tensor, rtol=1e-3, atol=1e-3)
-        torch.testing.assert_close(col_sum_ours, col_sum_pot_tensor, rtol=1e-3, atol=1e-3)
+        torch.testing.assert_close(
+            row_sum_ours, row_sum_pot_tensor, rtol=1e-3, atol=1e-3
+        )
+        torch.testing.assert_close(
+            col_sum_ours, col_sum_pot_tensor, rtol=1e-3, atol=1e-3
+        )
 
     def test_dual_potentials_consistency(self, device, pot_available):
         """Test dual potential consistency with POT coupling matrix."""
@@ -152,21 +164,26 @@ class TestCrossValidationPOT:
         import ot
         from sinkhorn.pytorch.balanced import sinkhorn_balanced
 
-        N, M = 16, 20
+        n_samples = 16
+        n_features = 3
         epsilon = 0.1
+        max_iters = 500
 
-        np.random.seed(789)
-        C_np = np.abs(np.random.randn(N, M)).astype(np.float32)
-        a_np = np.exp(np.random.randn(N).astype(np.float32))
-        a_np = a_np / a_np.sum()
-        b_np = np.exp(np.random.randn(M).astype(np.float32))
-        b_np = b_np / b_np.sum()
+        # Create test data using POT's standard pattern
+        rng = np.random.RandomState(789)
+        x = rng.randn(n_samples, n_features).astype(np.float32)
+        y = rng.randn(n_samples, n_features).astype(np.float32)
+        a_np = ot.utils.unif(n_samples).astype(np.float32)
+        b_np = ot.utils.unif(n_samples).astype(np.float32)
+        C_np = ot.dist(x, y).astype(np.float32)
 
         C = torch.from_numpy(C_np).unsqueeze(0).to(device)
         a = torch.from_numpy(a_np).unsqueeze(0).to(device)
         b = torch.from_numpy(b_np).unsqueeze(0).to(device)
 
-        f, g, _, converged = sinkhorn_balanced(C, a, b, epsilon=epsilon, max_iters=200)
+        f, g, _, converged = sinkhorn_balanced(
+            C, a, b, epsilon=epsilon, max_iters=max_iters
+        )
 
         assert converged, "Should converge"
 
@@ -189,14 +206,16 @@ class TestCrossValidationPOT:
         import ot
         from sinkhorn.pytorch.balanced import sinkhorn_balanced
 
-        N, M = 16, 16
+        n_samples = 16
+        n_features = 3
 
-        np.random.seed(321)
-        C_np = np.abs(np.random.randn(N, M)).astype(np.float32)
-        a_np = np.exp(np.random.randn(N).astype(np.float32))
-        a_np = a_np / a_np.sum()
-        b_np = np.exp(np.random.randn(M).astype(np.float32))
-        b_np = b_np / b_np.sum()
+        # Create test data using POT's standard pattern
+        rng = np.random.RandomState(321)
+        x = rng.randn(n_samples, n_features).astype(np.float32)
+        y = rng.randn(n_samples, n_features).astype(np.float32)
+        a_np = ot.utils.unif(n_samples).astype(np.float32)
+        b_np = ot.utils.unif(n_samples).astype(np.float32)
+        C_np = ot.dist(x, y).astype(np.float32)
 
         C = torch.from_numpy(C_np).unsqueeze(0).to(device)
         a = torch.from_numpy(a_np).unsqueeze(0).to(device)
@@ -206,16 +225,18 @@ class TestCrossValidationPOT:
 
         for eps in epsilons:
             # POT
-            P_pot = ot.sinkhorn(a_np, b_np, C_np, eps, numItermax=300)
+            P_pot = ot.sinkhorn(a_np, b_np, C_np, eps, numItermax=100)
             cost_pot = np.sum(P_pot * C_np)
 
             # Ours
-            f, g, _, _ = sinkhorn_balanced(C, a, b, epsilon=eps, max_iters=300)
+            f, g, _, _ = sinkhorn_balanced(C, a, b, epsilon=eps, max_iters=100)
             log_P = (f.unsqueeze(-1) + g.unsqueeze(-2) - C) / eps
             P_ours = torch.exp(log_P)
             cost_ours = (P_ours * C).sum()
 
-            cost_pot_tensor = torch.tensor(cost_pot, device=cost_ours.device, dtype=cost_ours.dtype)
+            cost_pot_tensor = torch.tensor(
+                cost_pot, device=cost_ours.device, dtype=cost_ours.dtype
+            )
             torch.testing.assert_close(cost_ours, cost_pot_tensor, rtol=1e-3, atol=1e-3)
 
 

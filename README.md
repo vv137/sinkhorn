@@ -7,7 +7,7 @@ High-performance Triton kernels for balanced and unbalanced Sinkhorn optimal tra
 - 🚀 **Triton-accelerated** kernels with O(N+M) memory via streaming LSE
 - ⚖️ **Unified API** for both balanced and unbalanced optimal transport
 - 🎭 **Masking support** for variable-length sequences
-- 🔄 **Implicit differentiation** for memory-efficient backward pass
+- 🔄 **Gradient checkpointing** for memory-efficient backward pass
 - 📊 **Pure PyTorch fallback** for comparison and debugging
 
 ## Installation
@@ -76,12 +76,12 @@ src/sinkhorn/
 ├── pytorch/           # Pure PyTorch reference implementations
 │   ├── balanced.py    # Balanced Sinkhorn (τ=∞)
 │   ├── unbalanced.py  # Unbalanced Sinkhorn with KL relaxation
-│   └── implicit_diff.py
+│   └── implicit_diff.py  # Utility functions (transport plan, JVP)
 ├── triton/            # Triton kernel implementations
 │   ├── lse_kernel.py  # Streaming log-sum-exp
 │   ├── forward.py     # Row/col update kernels
-│   └── jvp_kernel.py  # JVP for implicit differentiation
-└── autograd.py        # torch.autograd.Function wrappers
+│   └── jvp_kernel.py  # JVP utilities
+└── autograd.py        # Gradient checkpointing for backward pass
 ```
 
 ## Mathematical Background
@@ -100,9 +100,14 @@ f ← ρ·f + (1-ρ)·(-ε·logsumexp((g - C)/ε, dim=M) + ε·log(a))
 g ← ρ·g + (1-ρ)·(-ε·logsumexp((f - C)/ε, dim=N) + ε·log(b))
 ```
 
-### Implicit Differentiation
+### Gradient Checkpointing
 
-Backward pass uses Neumann series to solve adjoint system without storing intermediate iterations.
+Backward pass uses **checkpointed recomputation** for memory efficiency:
+
+- Forward: Run without gradient tracking → O(NM) memory
+- Backward: Recompute forward with gradients, then backprop
+
+This provides exact gradients with O(NM) memory instead of O(K×NM) for K iterations.
 
 ## API Reference
 

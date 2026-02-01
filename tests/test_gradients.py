@@ -51,6 +51,7 @@ class TestGradients:
 
         assert C.grad is not None, "Gradient not computed"
         assert not torch.isnan(C.grad).any(), "Gradient contains NaN"
+        assert passed, "Gradient check failed"
 
     def test_gradient_flow(self, device):
         """Test that gradients flow through Sinkhorn."""
@@ -116,6 +117,46 @@ class TestUnbalancedGradients:
     @pytest.fixture
     def device(self):
         return torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
+    def test_gradcheck_unbalanced(self, device):
+        """Test unbalanced gradients w.r.t. cost matrix using finite differences."""
+        if not torch.cuda.is_available():
+            pytest.skip("CUDA not available")
+
+        torch.manual_seed(42)  # For reproducibility
+        B, N, M = 2, 8, 8
+        C = torch.randn(B, N, M, device=device, dtype=torch.float64, requires_grad=True)
+        a = torch.softmax(torch.randn(B, N, device=device, dtype=torch.float64), dim=-1)
+        b = torch.softmax(torch.randn(B, M, device=device, dtype=torch.float64), dim=-1)
+
+        def func(C):
+            f, g = sinkhorn_differentiable(
+                C,
+                a,
+                b,
+                epsilon=0.5,
+                tau_a=1.0,
+                tau_b=1.0,  # Unbalanced
+                max_iters=100,  # More iterations for stability
+                backend="pytorch",
+            )
+            return f.sum() + g.sum()
+
+        passed = torch.autograd.gradcheck(
+            func,
+            (C,),
+            eps=1e-4,
+            atol=1e-3,
+            rtol=1e-2,
+            raise_exception=False,
+        )
+
+        loss = func(C)
+        loss.backward()
+
+        assert C.grad is not None, "Gradient not computed"
+        assert not torch.isnan(C.grad).any(), "Gradient contains NaN"
+        assert passed, "Gradient check failed for unbalanced Sinkhorn"
 
     def test_unbalanced_gradient_flow(self, device):
         """Test gradient flow with unbalanced mode."""

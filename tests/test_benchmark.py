@@ -109,8 +109,8 @@ class TestCompareBackends:
         f_err = (out_pytorch.f - out_triton.f).abs().max()
         g_err = (out_pytorch.g - out_triton.g).abs().max()
 
-        assert f_err < 0.5, f"f differs too much: {f_err}"
-        assert g_err < 0.5, f"g differs too much: {g_err}"
+        assert f_err < 0.1, f"f differs too much: {f_err}"
+        assert g_err < 0.1, f"g differs too much: {g_err}"
 
     @pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA required")
     def test_transport_plans_agree(self, problem):
